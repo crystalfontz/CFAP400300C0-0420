@@ -75,7 +75,7 @@
 
 // Include LUTs
 #include "LUTs_for_CFAP400300C00420.h"
-
+#include "Images_for_CFAP400300C00420.h"
 
 #define ePaper_RST_0  (digitalWrite(EPD_RESET, LOW))
 #define ePaper_RST_1  (digitalWrite(EPD_RESET, HIGH))
@@ -89,6 +89,9 @@
 #define EPD_DC      5
 #define EPD_CS      10
 #define SD_CS       8
+
+#define HRES  300
+#define VRES  400
 
 //=============================================================================
 //this function will take in a byte and send it to the display with the 
@@ -177,7 +180,7 @@ void initEPD()
 
   //Panel Setting 
   writeCMD(0x00);
-  writeData(0x0b);
+  writeData(0x83);
 
   //PLL Control
   writeCMD(0x30);
@@ -384,6 +387,84 @@ void show_BMPs_in_root(void)
 }
 
 //================================================================================
+void Load_Flash_Image_To_Display_RAM_RLE(uint16_t width_pixels,
+  uint16_t height_pixels,
+  const uint8_t *BW_image,
+  const uint8_t *R_image)
+{
+  //Index into *image, that works with pgm_read_byte()
+  uint8_t count = 0;
+
+  //Get width_bytes from width_pixel, rounding up
+  uint8_t
+    width_bytes;
+  width_bytes = (width_pixels + 7) >> 3;
+
+  //Make sure the display is not busy before starting a new command.
+  while (0 == digitalRead(EPD_READY));
+  //Select the controller   
+  ePaper_CS_0;
+
+  //Aim at the command register
+  ePaper_DC_0;
+  //Write the command: DATA START TRANSMISSION 1 (DTM2) (R13H)
+  //  Display Start transmission 1
+  //  (DTM1, BW Data)
+  //
+  // This command starts transmitting data and write them into SRAM. To complete
+  // data transmission, command DSP (Data transmission Stop) must be issued. Then
+  // the chip will start to send data/VCOM for panel.
+  //  * In B/W mode, this command writes “OLD” data to SRAM.
+  //  * In B/W/Red mode, this command writes “BW” data to SRAM.
+  SPI.transfer(0x10);
+  //Pump out the BW data.
+  ePaper_DC_1;
+  count = 0;
+  for (int i = 0; i < MONO_ARRAY_SIZE; i = i + 2)
+  {
+    count = pgm_read_byte(&BW_image[i]);
+    for (uint8_t j = 0; j < count; j++)
+    {
+      SPI.transfer(pgm_read_byte(&BW_image[i + 1]));
+    }
+  }
+
+
+
+  //Aim at the command register
+  ePaper_DC_0;
+  //Write the command: DATA START TRANSMISSION 2 (DTM2) (R13H)
+  //  Display Start transmission 2
+  //  (DTM2, Red Data)
+  //
+  // This command starts transmitting data and write them into SRAM. To complete
+  // data transmission, command DSP (Data transmission Stop) must be issued. Then
+  // the chip will start to send data/VCOM for panel.
+  //  * In B/W mode, this command writes “NEW” data to SRAM.
+  //  * In B/W/Red mode, this command writes “Red” data to SRAM.
+  SPI.transfer(0x13);
+  //Pump out the Red data.
+  ePaper_DC_1;
+  count = 0;
+  for (int i = 0; i < YELLOW_ARRAY_SIZE; i = i + 2)
+  {
+    count = pgm_read_byte(&R_image[i]);
+    for (uint8_t j = 0; j < count; j++)
+      SPI.transfer(pgm_read_byte(&R_image[i + 1]));
+  }
+
+  //Aim back at the command register
+  ePaper_DC_0;
+  //Write the command: DATA STOP (DSP) (R11H)
+  SPI.transfer(0x11);
+  //Write the command: Display Refresh (DRF)   
+  SPI.transfer(0x12);
+  //Deslect the controller   
+  ePaper_CS_1;
+}
+
+
+//================================================================================
 void send_pixels_BW(uint16_t byteCount, uint8_t *dataPtr)
 {
   uint8_t data;
@@ -490,21 +571,53 @@ void send_pixels_Y(uint8_t byteCount, uint8_t *dataPtr)
 }
 
 
+void powerON()
+{
+  writeCMD(0x04);
+}
 
+void powerOff()
+{
+  writeCMD(0x02);
+  writeCMD(0x03);
+  writeData(0x00);
+}
 
 //=============================================================================
 #define SHUTDOWN_BETWEEN_UPDATES (0)
-#define white 0
-#define black 0
-#define yellow 1
-#define checkerboard 1
-#define partialUpdate 0
-#define showBMPs 0
+#define waittime          18000
+#define splashscreenRLE   1
+#define white             0
+#define black             0
+#define yellow            1
+#define checkerboard      1
+#define partialUpdate     0
+#define showBMPs          0
 void loop()
 {
   Serial.println("top of loop");
 
+
+#if splashscreenRLE
+  //on the Seeeduino, there is not enough flash memory to store this data 
+  //but if another uP with more flash is used, this function can be utilized
+  //power on the display
+  powerON();
+  //load an image to the display
+  Load_Flash_Image_To_Display_RAM_RLE(HRES, VRES, Mono_1BPP, Yellow_1BPP);
+
+
+  Serial.print("refreshing . . . ");
+  while (0 == digitalRead(EPD_READY));
+  Serial.println("refresh complete");
+  //for maximum power conservation, power off the EPD
+  powerOff();
+  delay(waittime);
+#endif
+
+
 #if white
+  powerON();
 	//Display the splash screen
 	writeCMD(0x10);
 	for (int i = 0; i < 15000; i++)
@@ -523,11 +636,13 @@ void loop()
 	writeCMD(0x12);
 	while (0 == digitalRead(EPD_READY));
   Serial.println("after refresh wait");
-	delay(2000);
+  powerOff();
+	delay(waittime);
 #endif
 
 
 #if black
+  powerON();
   //Display the splash screen
   writeCMD(0x10);
   for (int i = 0; i < 15000; i++)
@@ -546,11 +661,13 @@ void loop()
   writeCMD(0x12);
   while (0 == digitalRead(EPD_READY));
   Serial.println("after refresh wait");
-  delay(2000);
+  powerOff();
+  delay(waittime);
 #endif
 
 
 #if yellow
+  powerON();
   //Display the splash screen
   writeCMD(0x10);
   for (int i = 0; i < 15000; i++)
@@ -569,12 +686,15 @@ void loop()
   writeCMD(0x12);
   while (0 == digitalRead(EPD_READY));
   Serial.println("after refresh wait");
-  delay(2000);
+  powerOff();
+  delay(waittime);
 #endif
 
 #if checkerboard
   uint8_t color1 = 0x00;
   uint8_t color2 = 0xff;
+
+  powerON();
 
   writeCMD(0x10);
   for (int i = 0; i < 300; i++)
@@ -611,25 +731,30 @@ void loop()
   writeCMD(0x12);
   while (0 == digitalRead(EPD_READY));
   Serial.println("after refresh wait");
-  delay(20000);
+  powerOff();
+  delay(waittime);
 #endif
 
 #if partialUpdate
+  powerON();
   partialUpdateSolid(100, 100, 200, 200, 0xff, 0x00);
   while (0 == digitalRead(EPD_READY));
   delay(1000);
 
   partialUpdateSolid(100, 100, 200, 200, 0x00, 0xff);
   while (0 == digitalRead(EPD_READY));
-  delay(2000);
+  delay(1000);
 
   partialUpdateSolid(100, 100, 200, 200, 0x00, 0x00);
   while (0 == digitalRead(EPD_READY));
-  delay(2000);
+  powerOff();
+  delay(waittime);
 #endif
 
 #if showBMPs
+  powerON();
   show_BMPs_in_root();
+  powerOff();
 #endif
 
 }
