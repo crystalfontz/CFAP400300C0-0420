@@ -250,6 +250,10 @@ void setOTPLUT()
 
 void partialUpdateSolid(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint8_t color1, uint8_t color2)
 {
+  //Please note, this is demonstration code on how to use the Partial Updating on the controller but this display itself
+  //  does not support partial updating. Using this code may cause ghosting issues over time.
+
+
   //turn on partial update mode
   writeCMD(0x91);
 
@@ -736,6 +740,10 @@ void loop()
 #endif
 
 #if partialUpdate
+  //Please note, this is demonstration code on how to use the Partial Updating on the controller but this display itself
+  //  does not support partial updating. Using this code may cause ghosting issues over time.
+
+
   powerON();
   partialUpdateSolid(100, 100, 200, 200, 0xff, 0x00);
   while (0 == digitalRead(EPD_READY));
